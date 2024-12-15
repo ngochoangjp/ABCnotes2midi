@@ -65,117 +65,168 @@ def convert_abc_and_play(abc_code):
     else:
         return None, None
 
+def pitch_to_abc(pitch_name):
+    """Convert music21 pitch name to ABC notation."""
+    # Extract note name and octave
+    base_note = pitch_name[0].upper()  # Keep uppercase for ABC notation
+    octave = int(pitch_name[-1])
+    
+    # Handle accidentals - ABC uses ^ for sharp and _ for flat
+    if '#' in pitch_name:
+        base_note = f"^{base_note}"
+    elif '-' in pitch_name or 'b' in pitch_name:
+        base_note = f"_{base_note}"
+    
+    # Handle octaves relative to middle C (C4)
+    # In ABC: C is in octave 4, c is in octave 5, C, is in octave 3
+    if octave == 4:
+        return base_note
+    elif octave == 5:
+        return base_note.lower()
+    elif octave > 5:
+        return base_note.lower() + "'" * (octave - 5)
+    elif octave == 3:
+        return base_note + ","
+    else:
+        return base_note + "," * (4 - octave)
+
+def duration_to_abc(dur):
+    """Convert music21 duration to ABC notation."""
+    qlen = dur.quarterLength
+    if qlen.is_integer():
+        return str(int(qlen)) if qlen != 1 else ""
+    # Handle dotted notes
+    if qlen * 2 % 1 == 0:
+        return f"{int(qlen * 2)}/2"
+    if qlen * 4 % 1 == 0:
+        return f"{int(qlen * 4)}/4"
+    # For more complex durations
+    return f"{int(qlen * 8)}/8"
+
+def midi_note_to_abc(midi_number):
+    """Convert MIDI note number to ABC notation."""
+    # MIDI note 60 is middle C (C4)
+    notes = ['C', '^C', 'D', '^D', 'E', 'F', '^F', 'G', '^G', 'A', '^A', 'B']
+    octave = (midi_number // 12) - 1
+    note_index = midi_number % 12
+    note_name = notes[note_index]
+    
+    # Handle octaves relative to middle C (C4 = MIDI 60)
+    if octave == 4:  # Middle octave
+        return note_name
+    elif octave == 5:  # One octave up
+        return note_name.lower()
+    elif octave > 5:  # More than one octave up
+        return note_name.lower() + "'" * (octave - 5)
+    elif octave == 3:  # One octave down
+        return note_name + ","
+    else:  # More than one octave down
+        return note_name + "," * (4 - octave)
+
 def midi_to_abc(midi_file):
     """Converts a MIDI file to ABC notation and returns the ABC code."""
     try:
-        # Use music21 to parse the MIDI file
-        midi_stream = converter.parse(midi_file.name)
+        # Parse MIDI file using mido for direct MIDI access
+        mid = MidiFile(midi_file)
+        ticks_per_beat = mid.ticks_per_beat
         
-        # Get tempo from the MIDI file
-        tempo = None
-        for element in midi_stream.recurse():
-            if 'TempoIndication' in element.classes:
-                tempo = int(element.number)
-                break
+        # Initialize variables
+        tempo = 120  # default tempo in BPM
+        microseconds_per_beat = 500000  # default tempo (120 BPM)
+        current_time = 0
+        notes = []
+        time_sig_num = 4
+        time_sig_den = 4
         
-        # If no tempo found, default to 120 BPM
-        if tempo is None:
-            tempo = 120
+        # First pass: collect tempo and time signature
+        for track in mid.tracks:
+            for msg in track:
+                if msg.type == 'set_tempo':
+                    microseconds_per_beat = msg.tempo
+                    tempo = int(60000000 / microseconds_per_beat)
+                    print(f"Tempo set to {tempo} BPM (microseconds per beat: {microseconds_per_beat})")
+                elif msg.type == 'time_signature':
+                    time_sig_num = msg.numerator
+                    time_sig_den = msg.denominator
+                    print(f"Time signature set to {time_sig_num}/{time_sig_den}")
         
-        # Initialize ABC header
+        # Calculate ticks per quarter note for duration conversion
+        ticks_per_quarter = ticks_per_beat
+        seconds_per_tick = microseconds_per_beat / (ticks_per_beat * 1000000)
+        print(f"Ticks per quarter note: {ticks_per_quarter}, Seconds per tick: {seconds_per_tick}")
+        
+        # Second pass: collect notes with proper timing
+        active_notes = {}
+        for track in mid.tracks:
+            current_ticks = 0
+            for msg in track:
+                current_ticks += msg.time
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    # Store start time of note
+                    active_notes[msg.note] = current_ticks
+                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                    if msg.note in active_notes:
+                        start_ticks = active_notes[msg.note]
+                        duration_ticks = current_ticks - start_ticks
+                        # Convert ticks to quarter note duration
+                        duration = duration_ticks / ticks_per_quarter
+                        notes.append(('note', msg.note, duration))
+                        del active_notes[msg.note]
+                        print(f"Note {msg.note}: duration {duration} quarters ({duration_ticks} ticks)")
+        
+        # Create ABC header
         abc_code = [
             "X:1",
             "T:Converted from MIDI",
-            f"Q:1/4={tempo}",  # Add tempo marking
-            "M:4/4",
-            "L:1/4",  # Base length is quarter note
-            "K:C",
-            ""  # Empty line before notes
+            f"Q:1/4={tempo}",  # Set tempo in quarter notes per minute
+            f"M:{time_sig_num}/{time_sig_den}",
+            "L:1/4",  # Set default note length to quarter note
+            "K:C",  # Use C major as default
+            ""
         ]
         
-        def duration_to_abc(dur):
-            """Convert music21 duration to ABC notation duration."""
-            # Get duration in terms of quarter notes
-            qlen = dur.quarterLength
+        # Convert notes to ABC notation with proper durations
+        current_measure_duration = 0
+        beats_per_measure = float(time_sig_num)
+        
+        for note_type, midi_num, duration in notes:
+            # Convert MIDI note to ABC notation
+            abc_note = midi_note_to_abc(midi_num)
             
-            # Handle special cases for common note lengths
-            if qlen == 0.25:  # Sixteenth note
-                return "/4"
-            elif qlen == 0.5:  # Eighth note
-                return "/2"
-            elif qlen == 1.0:  # Quarter note (base length)
-                return ""
-            elif qlen == 1.5:  # Dotted quarter note
-                return "3/2"
-            elif qlen == 2.0:  # Half note
-                return "2"
-            elif qlen == 3.0:  # Dotted half note
-                return "3"
-            elif qlen == 4.0:  # Whole note
-                return "4"
+            # Add duration marking
+            if duration != 1.0:  # Only add duration if not a quarter note
+                if duration.is_integer():
+                    abc_note += str(int(duration))
+                else:
+                    # Handle common fraction cases
+                    if abs(duration - 0.5) < 0.01:  # eighth note
+                        abc_note += "/2"
+                    elif abs(duration - 0.25) < 0.01:  # sixteenth note
+                        abc_note += "/4"
+                    elif abs(duration - 1.5) < 0.01:  # dotted quarter
+                        abc_note += "3/2"
+                    elif abs(duration - 0.75) < 0.01:  # dotted eighth
+                        abc_note += "3/4"
+                    else:
+                        # For other durations, use the closest fraction
+                        abc_note += f"{int(duration * 4)}/4"
             
-            # For other durations, calculate the ratio to quarter note
-            ratio = int(qlen * 4) / 4
-            if ratio.is_integer():
-                return str(int(ratio))
-            else:
-                return f"{int(qlen * 4)}/4"
-        
-        # Extract notes and chords
-        for element in midi_stream.recurse().notes:
-            if isinstance(element, note.Note):
-                # Convert note to ABC notation with duration
-                pitch_name = element.nameWithOctave
-                # Convert music21 pitch name to ABC notation
-                abc_note = pitch_name.replace('4', '').replace('5', "'").replace('3', ',')
-                # Add duration
-                abc_note += duration_to_abc(element.duration)
-                abc_code.append(abc_note)
-            elif isinstance(element, chord.Chord):
-                # Convert chord to ABC notation with duration
-                chord_notes = [n.nameWithOctave for n in element.notes]
-                # Convert music21 chord to ABC notation
-                abc_chord = "[" + " ".join(n.replace('4', '').replace('5', "'").replace('3', ',') for n in chord_notes) + "]"
-                # Add duration
-                abc_chord += duration_to_abc(element.duration)
-                abc_code.append(abc_chord)
-        
-        # Join all parts with proper line breaks and add bar lines
-        notes_list = abc_code[7:]  # Get all notes after the header
-        measures = []
-        current_measure = []
-        current_length = 0
-        
-        # Split into measures (assuming 4/4 time, each measure is 4 quarter notes)
-        for note_str in notes_list:
-            current_measure.append(note_str)
-            # Calculate duration based on ABC notation
-            dur = 1.0  # Default to quarter note
-            if '/' in note_str:
-                if '/4' in note_str:
-                    dur = 0.25  # Sixteenth note
-                elif '/2' in note_str:
-                    dur = 0.5  # Eighth note
-            elif any(str(i) in note_str for i in range(2, 9)):
-                # Get the duration number
-                num = int(''.join(c for c in note_str if c.isdigit()))
-                dur = float(num)
+            abc_code.append(abc_note)
+            current_measure_duration += duration
             
-            current_length += dur
-            if current_length >= 4.0:  # Full measure (4 quarter notes)
-                measures.append(" ".join(current_measure) + " |")
-                current_measure = []
-                current_length = 0
+            # Add bar lines at measure boundaries
+            if current_measure_duration >= beats_per_measure:
+                abc_code.append("|")
+                current_measure_duration = 0
         
-        # Add any remaining notes
-        if current_measure:
-            measures.append(" ".join(current_measure) + " |")
+        # Add final bar line if needed
+        if abc_code[-1] != "|":
+            abc_code.append("|")
         
-        # Combine header with measures
-        return "\n".join(abc_code[:7] + [" ".join(measures)])
-
+        return "\n".join(abc_code)
     except Exception as e:
-        raise gr.Error(f"Error converting MIDI to ABC: {e}")
+        print(f"Error converting MIDI to ABC: {str(e)}")
+        raise gr.Error(f"Error converting MIDI to ABC: {str(e)}")
 
 def chord_to_midi(chord_name):
     """Converts a chord name to a MIDI file and returns the MIDI file path."""
