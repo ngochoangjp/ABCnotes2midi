@@ -49,33 +49,95 @@ def midi_to_abc(midi_file):
         # Use music21 to parse the MIDI file
         midi_stream = converter.parse(midi_file.name)
         
+        # Get tempo from the MIDI file
+        tempo = None
+        for element in midi_stream.recurse():
+            if 'TempoIndication' in element.classes:
+                tempo = int(element.number)
+                break
+        
+        # If no tempo found, default to 120 BPM
+        if tempo is None:
+            tempo = 120
+        
         # Initialize ABC header
         abc_code = [
             "X:1",
             "T:Converted from MIDI",
+            f"Q:1/4={tempo}",  # Add tempo marking
             "M:4/4",
-            "L:1/8",
+            "L:1/8",  # Base length is eighth note
             "K:C",
             ""  # Empty line before notes
         ]
         
+        def duration_to_abc(dur):
+            """Convert music21 duration to ABC notation duration."""
+            # Get duration in terms of quarter notes
+            qlen = dur.quarterLength
+            # Convert to ABC duration (based on L:1/8)
+            if qlen == 0.5:  # Sixteenth note
+                return "/2"
+            elif qlen == 1:  # Eighth note
+                return ""
+            elif qlen == 2:  # Quarter note
+                return "2"
+            elif qlen == 4:  # Half note
+                return "4"
+            elif qlen == 8:  # Whole note
+                return "8"
+            else:
+                # Handle dotted notes and other durations
+                return str(int(qlen * 2))
+        
         # Extract notes and chords
         for element in midi_stream.recurse().notes:
             if isinstance(element, note.Note):
-                # Convert note to ABC notation
+                # Convert note to ABC notation with duration
                 pitch_name = element.nameWithOctave
                 # Convert music21 pitch name to ABC notation
                 abc_note = pitch_name.replace('4', '').replace('5', "'").replace('3', ',')
+                # Add duration
+                abc_note += duration_to_abc(element.duration)
                 abc_code.append(abc_note)
             elif isinstance(element, chord.Chord):
-                # Convert chord to ABC notation
+                # Convert chord to ABC notation with duration
                 chord_notes = [n.nameWithOctave for n in element.notes]
                 # Convert music21 chord to ABC notation
                 abc_chord = "[" + " ".join(n.replace('4', '').replace('5', "'").replace('3', ',') for n in chord_notes) + "]"
+                # Add duration
+                abc_chord += duration_to_abc(element.duration)
                 abc_code.append(abc_chord)
         
-        # Join all parts with proper line breaks
-        return "\n".join(abc_code)
+        # Join all parts with proper line breaks and add bar lines
+        notes_list = abc_code[7:]  # Get all notes after the header (now including tempo)
+        measures = []
+        current_measure = []
+        current_length = 0
+        
+        # Split into measures (assuming 4/4 time, each measure is 8 eighth notes)
+        for note_str in notes_list:
+            current_measure.append(note_str)
+            # Simple duration counting (this is a basic approximation)
+            dur = 1  # Default to eighth note
+            if '/' in note_str:
+                dur = 0.5  # Sixteenth note
+            elif any(str(i) in note_str for i in range(2, 9)):
+                # Get the duration number
+                dur = int(''.join(c for c in note_str if c.isdigit()))
+            current_length += dur
+            
+            if current_length >= 8:  # Full measure (8 eighth notes)
+                measures.append(" ".join(current_measure) + " |")
+                current_measure = []
+                current_length = 0
+                
+        # Add any remaining notes
+        if current_measure:
+            measures.append(" ".join(current_measure) + " |")
+        
+        # Combine header with measures
+        return "\n".join(abc_code[:7] + [" ".join(measures)])
 
     except Exception as e:
         raise gr.Error(f"Error converting MIDI to ABC: {e}")
