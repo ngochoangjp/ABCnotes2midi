@@ -1,0 +1,189 @@
+[
+    {
+        "label": "gradio",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "gradio",
+        "description": "gradio",
+        "detail": "gradio",
+        "documentation": {}
+    },
+    {
+        "label": "mido",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "mido",
+        "description": "mido",
+        "detail": "mido",
+        "documentation": {}
+    },
+    {
+        "label": "MidiFile",
+        "importPath": "mido",
+        "description": "mido",
+        "isExtraImport": true,
+        "detail": "mido",
+        "documentation": {}
+    },
+    {
+        "label": "MidiTrack",
+        "importPath": "mido",
+        "description": "mido",
+        "isExtraImport": true,
+        "detail": "mido",
+        "documentation": {}
+    },
+    {
+        "label": "Message",
+        "importPath": "mido",
+        "description": "mido",
+        "isExtraImport": true,
+        "detail": "mido",
+        "documentation": {}
+    },
+    {
+        "label": "converter",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "instrument",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "note",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "chord",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "stream",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "duration",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "environment",
+        "importPath": "music21",
+        "description": "music21",
+        "isExtraImport": true,
+        "detail": "music21",
+        "documentation": {}
+    },
+    {
+        "label": "FluidSynth",
+        "importPath": "midi2audio",
+        "description": "midi2audio",
+        "isExtraImport": true,
+        "detail": "midi2audio",
+        "documentation": {}
+    },
+    {
+        "label": "tempfile",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "tempfile",
+        "description": "tempfile",
+        "detail": "tempfile",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "subprocess",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "subprocess",
+        "description": "subprocess",
+        "detail": "subprocess",
+        "documentation": {}
+    },
+    {
+        "label": "abc_to_midi",
+        "kind": 2,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "def abc_to_midi(abc_code):\n    \"\"\"Converts ABC notation to a MIDI file and returns the MIDI file path.\"\"\"\n    try:\n        s = converter.parse(abc_code, format='abc')\n        with tempfile.NamedTemporaryFile(suffix=\".mid\", delete=False) as temp_midi_file:\n            midi_file_path = temp_midi_file.name\n            s.write('midi', fp=midi_file_path)\n        return midi_file_path\n    except Exception as e:\n        raise gr.Error(f\"Error converting ABC to MIDI: {e}\")",
+        "detail": "abc2midi",
+        "documentation": {}
+    },
+    {
+        "label": "play_midi",
+        "kind": 2,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "def play_midi(midi_file_path):\n    \"\"\"Plays the MIDI file using FluidSynth and returns the audio file path.\"\"\"\n    try:\n        with tempfile.NamedTemporaryFile(suffix=\".wav\", delete=False) as temp_audio_file:\n            audio_file_path = temp_audio_file.name\n        fs = FluidSynth()\n        fs.midi_to_audio(midi_file_path, audio_file_path)\n        return audio_file_path\n    except Exception as e:\n        raise gr.Error(f\"Error playing MIDI: {e}\")",
+        "detail": "abc2midi",
+        "documentation": {}
+    },
+    {
+        "label": "convert_abc_and_play",
+        "kind": 2,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "def convert_abc_and_play(abc_code):\n    \"\"\"Converts ABC to MIDI, plays it, and returns both MIDI and audio file paths.\"\"\"\n    midi_file_path = abc_to_midi(abc_code)\n    if midi_file_path:\n        audio_file_path = play_midi(midi_file_path)\n        return midi_file_path, audio_file_path\n    else:\n        return None, None\ndef midi_to_abc(midi_file):\n    \"\"\"Converts a MIDI file to ABC notation and returns the ABC code.\"\"\"",
+        "detail": "abc2midi",
+        "documentation": {}
+    },
+    {
+        "label": "midi_to_abc",
+        "kind": 2,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "def midi_to_abc(midi_file):\n    \"\"\"Converts a MIDI file to ABC notation and returns the ABC code.\"\"\"\n    try:\n        # Use music21 to parse the MIDI file\n        midi_stream = converter.parse(midi_file.name)\n        # Convert to ABC notation\n        abc_converter = converter.subConverters.ConverterABC()\n        abc_stream = abc_converter.streamTo পন্থাWork(midi_stream)\n        abc_code = abc_converter.write(abc_stream, fmt='ABC', fp=None)\n        # Return the ABC code as a string",
+        "detail": "abc2midi",
+        "documentation": {}
+    },
+    {
+        "label": "chord_to_midi",
+        "kind": 2,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "def chord_to_midi(chord_name):\n    \"\"\"Converts a chord name to a MIDI file and returns the MIDI file path.\"\"\"\n    try:\n        c = chord.Chord(chord_name)\n        c.duration = duration.Duration(4)  # Set duration to 4 quarter notes (adjust as needed)\n        s = stream.Stream()\n        s.append(c)\n        with tempfile.NamedTemporaryFile(suffix=\".mid\", delete=False) as temp_midi_file:\n            midi_file_path = temp_midi_file.name\n            s.write('midi', fp=midi_file_path)",
+        "detail": "abc2midi",
+        "documentation": {}
+    },
+    {
+        "label": "us",
+        "kind": 5,
+        "importPath": "abc2midi",
+        "description": "abc2midi",
+        "peekOfCode": "us = environment.UserSettings()\n# us['musescoreDirectPNGPath'] = '/path/to/musescore'  # Replace with your MuseScore path if needed\n# us['musicxmlPath'] = '/path/to/musescore'  # Replace with your MuseScore path if needed\ndef abc_to_midi(abc_code):\n    \"\"\"Converts ABC notation to a MIDI file and returns the MIDI file path.\"\"\"\n    try:\n        s = converter.parse(abc_code, format='abc')\n        with tempfile.NamedTemporaryFile(suffix=\".mid\", delete=False) as temp_midi_file:\n            midi_file_path = temp_midi_file.name\n            s.write('midi', fp=midi_file_path)",
+        "detail": "abc2midi",
+        "documentation": {}
+    }
+]
