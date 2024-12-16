@@ -1,49 +1,151 @@
 import gradio as gr
-import mido
-from mido import MidiFile, MidiTrack, Message
 from music21 import converter, instrument, note, chord, stream, duration, environment, roman
+import pretty_midi
 from midi2audio import FluidSynth
 import tempfile
 import os
-import subprocess
+import io
 
 # Set the music21 environment to find MuseScore (if available)
-us = environment.UserSettings()
+# us = environment.UserSettings()
 # us['musescoreDirectPNGPath'] = '/path/to/musescore'  # Replace with your MuseScore path if needed
 # us['musicxmlPath'] = '/path/to/musescore'  # Replace with your MuseScore path if needed
 
-def abc_to_midi(abc_code):
-    """Converts ABC notation to a MIDI file and returns the MIDI file path."""
+def midi_to_abc_notes(midi_file):
+    """Converts a MIDI file to a list of notes in the specified format."""
+    midi_data = pretty_midi.PrettyMIDI(midi_file.name)
+    notes_data = []
+    instrument_midi = midi_data.instruments[0]
+
+    # Metadata
+    title = "Untitled Score"  # You can try to extract from MIDI metadata if available
+    time_signature = midi_data.time_signature_changes[0] if midi_data.time_signature_changes else pretty_midi.TimeSignature(4, 4, 0)
+    bpm = midi_data.get_tempo_changes()[1][0] if midi_data.get_tempo_changes() else 120.0 # if no tempo changes, default to 120 bpm
+    
+    # Analyze key signature (using music21 for more robust key analysis)
     try:
-        # Create a temporary file for the ABC code
-        with tempfile.NamedTemporaryFile(suffix='.abc', mode='w', delete=False) as temp_abc:
-            temp_abc.write(abc_code)
-            abc_file_path = temp_abc.name
+        s = converter.parse(midi_file.name)
+        key = s.analyze('key')
+        key_quality = key.mode
+        key_signature = key.sharps
+    except:
+        key_quality = "Major"  # Default
+        key_signature = 0      # Default
 
-        # Parse the ABC file
-        s = converter.parse(abc_file_path, format='abc')
+    # Get longest and shortest durations
+    all_durations = [note.end - note.start for note in instrument_midi.notes]
+    longest_duration = max(all_durations) if all_durations else 0.0
+    shortest_duration = min(all_durations) if all_durations else 0.0
+
+    notes_data.append(f"#Title:\n{title}")
+    notes_data.append(f"#Time Signature:\n{time_signature.numerator}/{time_signature.denominator}")
+    notes_data.append(f"#Beats per Minute:\n{bpm}")
+    notes_data.append(f"#Key Quality:\n{key_quality}")
+    notes_data.append(f"#Key Signature. If it's positive, it's the number sharps otherwise the number flats:\n{key_signature}")
+    notes_data.append(f"#Longest Rhythm Value:\n{longest_duration}")
+    notes_data.append(f"#Shortest Rhythm Value:\n{shortest_duration}")
+    notes_data.append("#Start Time - Pitch - Duration - Dynamic - Pitch Name")
+    notes_data.append("#Part:\nUntitled Part")
+    notes_data.append(f"#Instrument:\n{instrument_midi.program}")
+    notes_data.append("#New Phrase:")  # Initial "New Phrase"
+
+    current_phrase_start = 0
+    is_drum = instrument_midi.is_drum
+
+    for note in instrument_midi.notes:
+        start_time = note.start
+        pitch = note.pitch if not is_drum else -2147483648
+        duration = note.end - note.start
+        dynamic = note.velocity
         
-        # Remove any duplicate time signatures
-        for p in s.parts:
-            ts_found = False
-            for m in p.getElementsByClass('Measure'):
-                for ts in m.getElementsByClass('TimeSignature'):
-                    if ts_found:
-                        m.remove(ts)
-                    else:
-                        ts_found = True
+        if is_drum:
+            pitch_name = "Drum"
+        else:
+            pitch_name = pretty_midi.note_number_to_name(note.pitch)
 
-        # Create MIDI file
-        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as temp_midi_file:
-            midi_file_path = temp_midi_file.name
-            s.write('midi', fp=midi_file_path)
+        # Add "New Phrase:" if start time is significantly different
+        if start_time - current_phrase_start > 4:  # Adjust threshold as needed
+            notes_data.append("#New Phrase:")
+            current_phrase_start = start_time
+        
+        notes_data.append(f"{start_time} {pitch} {duration} {dynamic} {pitch_name}")
+
+    return "\n".join(notes_data)
+
+def abc_notes_to_midi(abc_notes_string):
+    """Converts ABC notes to a MIDI file."""
+    print("Received ABC notes string:", abc_notes_string)  # Debug print
+    
+    # Parse metadata and notes
+    lines = [line.strip() for line in abc_notes_string.strip().split("\n") if line.strip()]
+    notes = []
+
+    # Parse each line that looks like note data (starts with a number)
+    for line in lines:
+        if line.startswith("#"):
+            continue
+        try:
+            parts = line.strip().split()
+            if len(parts) >= 5 and parts[0][0].isdigit():  # Check if line starts with a number
+                start_time = float(parts[0])
+                pitch = int(parts[1])
+                duration = float(parts[2])
+                velocity = int(parts[3])
+                notes.append((start_time, pitch, duration, velocity))
+                print(f"Added note: start={start_time}, pitch={pitch}, duration={duration}, velocity={velocity}")
+        except (ValueError, IndexError) as e:
+            print(f"Skipping invalid line: {line}, error: {e}")
+            continue
+
+    if not notes:
+        print("No valid notes found in input")
+        return None
+
+    # Create a PrettyMIDI object with default tempo
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120.0)
+
+    # Set time signature to 4/4
+    pm.time_signature_changes = [pretty_midi.TimeSignature(4, 4, 0)]
+
+    # Create a piano instrument
+    instrument = pretty_midi.Instrument(program=0)  # program 0 is acoustic grand piano
+
+    # Find the earliest start time to normalize times
+    min_start_time = min(note[0] for note in notes)
+    print(f"Normalizing times by subtracting {min_start_time}")
+
+    # Add notes to the instrument
+    notes_added = 0
+    for start_time, pitch, duration, velocity in notes:
+        # Skip drum notes
+        if pitch == -2147483648:
+            print(f"Skipping drum note: pitch={pitch}")
+            continue
             
-        # Clean up the temporary ABC file
-        os.remove(abc_file_path)
+        # Normalize start time
+        normalized_start = start_time - min_start_time
         
-        return midi_file_path
-    except Exception as e:
-        raise gr.Error(f"Error converting ABC to MIDI: {e}")
+        note = pretty_midi.Note(
+            velocity=velocity,
+            pitch=pitch,
+            start=normalized_start,
+            end=normalized_start + duration
+        )
+        instrument.notes.append(note)
+        notes_added += 1
+        print(f"Added normalized note: pitch={pitch}, start={normalized_start}, duration={duration}, velocity={velocity}")
+
+    print(f"Total notes added to MIDI: {notes_added}")
+
+    # Add the instrument to the PrettyMIDI object
+    pm.instruments.append(instrument)
+
+    # Save to a temporary file
+    temp_file = tempfile.NamedTemporaryFile(suffix='.mid', delete=False)
+    pm.write(temp_file.name)
+    temp_file.close()
+    print(f"Saved MIDI file to: {temp_file.name}")
+    return temp_file.name
 
 def play_midi(midi_file_path):
     """Plays the MIDI file using FluidSynth and returns the audio file path."""
@@ -55,127 +157,6 @@ def play_midi(midi_file_path):
         return audio_file_path
     except Exception as e:
         raise gr.Error(f"Error playing MIDI: {e}")
-
-def convert_abc_and_play(abc_code):
-    """Converts ABC to MIDI, plays it, and returns both MIDI and audio file paths."""
-    midi_file_path = abc_to_midi(abc_code)
-    if midi_file_path:
-        audio_file_path = play_midi(midi_file_path)
-        return midi_file_path, audio_file_path
-    else:
-        return None, None
-
-def midi_to_abc(midi_file):
-    """Converts a MIDI file to ABC notation and returns the ABC code."""
-    try:
-        # Use music21 to parse the MIDI file
-        midi_stream = converter.parse(midi_file.name)
-        
-        # Get tempo from the MIDI file
-        tempo = None
-        for element in midi_stream.recurse():
-            if 'TempoIndication' in element.classes:
-                tempo = int(element.number)
-                break
-        
-        # If no tempo found, default to 120 BPM
-        if tempo is None:
-            tempo = 120
-        
-        # Initialize ABC header
-        abc_code = [
-            "X:1",
-            "T:Converted from MIDI",
-            f"Q:1/4={tempo}",  # Add tempo marking
-            "M:4/4",
-            "L:1/4",  # Base length is quarter note
-            "K:C",
-            ""  # Empty line before notes
-        ]
-        
-        def duration_to_abc(dur):
-            """Convert music21 duration to ABC notation duration."""
-            # Get duration in terms of quarter notes
-            qlen = dur.quarterLength
-            
-            # Handle special cases for common note lengths
-            if qlen == 0.25:  # Sixteenth note
-                return "/4"
-            elif qlen == 0.5:  # Eighth note
-                return "/2"
-            elif qlen == 1.0:  # Quarter note (base length)
-                return ""
-            elif qlen == 1.5:  # Dotted quarter note
-                return "3/2"
-            elif qlen == 2.0:  # Half note
-                return "2"
-            elif qlen == 3.0:  # Dotted half note
-                return "3"
-            elif qlen == 4.0:  # Whole note
-                return "4"
-            
-            # For other durations, calculate the ratio to quarter note
-            ratio = int(qlen * 4) / 4
-            if ratio.is_integer():
-                return str(int(ratio))
-            else:
-                return f"{int(qlen * 4)}/4"
-        
-        # Extract notes and chords
-        for element in midi_stream.recurse().notes:
-            if isinstance(element, note.Note):
-                # Convert note to ABC notation with duration
-                pitch_name = element.nameWithOctave
-                # Convert music21 pitch name to ABC notation
-                abc_note = pitch_name.replace('4', '').replace('5', "'").replace('3', ',')
-                # Add duration
-                abc_note += duration_to_abc(element.duration)
-                abc_code.append(abc_note)
-            elif isinstance(element, chord.Chord):
-                # Convert chord to ABC notation with duration
-                chord_notes = [n.nameWithOctave for n in element.notes]
-                # Convert music21 chord to ABC notation
-                abc_chord = "[" + " ".join(n.replace('4', '').replace('5', "'").replace('3', ',') for n in chord_notes) + "]"
-                # Add duration
-                abc_chord += duration_to_abc(element.duration)
-                abc_code.append(abc_chord)
-        
-        # Join all parts with proper line breaks and add bar lines
-        notes_list = abc_code[7:]  # Get all notes after the header
-        measures = []
-        current_measure = []
-        current_length = 0
-        
-        # Split into measures (assuming 4/4 time, each measure is 4 quarter notes)
-        for note_str in notes_list:
-            current_measure.append(note_str)
-            # Calculate duration based on ABC notation
-            dur = 1.0  # Default to quarter note
-            if '/' in note_str:
-                if '/4' in note_str:
-                    dur = 0.25  # Sixteenth note
-                elif '/2' in note_str:
-                    dur = 0.5  # Eighth note
-            elif any(str(i) in note_str for i in range(2, 9)):
-                # Get the duration number
-                num = int(''.join(c for c in note_str if c.isdigit()))
-                dur = float(num)
-            
-            current_length += dur
-            if current_length >= 4.0:  # Full measure (4 quarter notes)
-                measures.append(" ".join(current_measure) + " |")
-                current_measure = []
-                current_length = 0
-        
-        # Add any remaining notes
-        if current_measure:
-            measures.append(" ".join(current_measure) + " |")
-        
-        # Combine header with measures
-        return "\n".join(abc_code[:7] + [" ".join(measures)])
-
-    except Exception as e:
-        raise gr.Error(f"Error converting MIDI to ABC: {e}")
 
 def chord_to_midi(chord_name):
     """Converts a chord name to a MIDI file and returns the MIDI file path."""
@@ -359,17 +340,27 @@ with gr.Blocks(title="ABC to MIDI Converter") as iface:
         """
     )
 
-    with gr.Tab("ABC to MIDI"):
-        abc_input = gr.Textbox(placeholder="Enter ABC notation here...", lines=7, label="ABC Notation")
-        with gr.Row():
-            abc_midi_output = gr.File(label="MIDI File")
-            abc_audio_output = gr.Audio(label="Audio Playback", autoplay=False)  # Autoplay set to False
-        abc_button = gr.Button("Convert and Play")
+    with gr.Tab("MIDI to ABC Notes"):
+        midi_input_notes = gr.File(label="Upload MIDI File", file_types=[".mid", ".midi"])
+        midi_abc_notes_output = gr.Textbox(label="ABC Notes", lines=15)
+        midi_notes_button = gr.Button("Convert to ABC Notes")
 
-    with gr.Tab("MIDI to ABC"):
-        midi_input = gr.File(label="Upload MIDI File", file_types=[".mid", ".midi"])
-        midi_abc_output = gr.Textbox(label="ABC Notation", lines=7)
-        midi_button = gr.Button("Convert to ABC")
+    with gr.Tab("ABC Notes to MIDI"):
+        example_abc = """51.0 62 0.5 80 D4
+51.5 60 0.5 80 C4
+52.0 57 0.5 80 A3
+52.5 57 0.5 80 A3
+53.0 62 0.5 80 D4
+53.5 60 0.5 80 C4
+54.0 57 1.0 80 A3
+55.0 58 0.5 80 A#3
+55.5 60 0.5 80 C4
+56.0 62 1.0 80 D4"""
+        abc_notes_input = gr.Textbox(label="ABC Notes", value=example_abc, lines=15)
+        with gr.Row():
+            abc_notes_midi_output = gr.File(label="MIDI File")
+            abc_notes_audio_output = gr.Audio(label="Audio Playback", autoplay=False)
+        abc_notes_button = gr.Button("Convert and Play")
 
     with gr.Tab("Chord to MIDI"):
         chord_input = gr.Textbox(placeholder="Enter chord name (e.g., Cmaj7, Dm, G7)...", label="Chord Name")
@@ -393,8 +384,8 @@ with gr.Blocks(title="ABC to MIDI Converter") as iface:
                     midi_with_chords_chords_audio = gr.Audio(label="Play")
             midi_with_chords_button = gr.Button("Process and Play")
 
-    abc_button.click(convert_abc_and_play, inputs=abc_input, outputs=[abc_midi_output, abc_audio_output])
-    midi_button.click(midi_to_abc, inputs=midi_input, outputs=midi_abc_output)
+    midi_notes_button.click(midi_to_abc_notes, inputs=midi_input_notes, outputs=midi_abc_notes_output)
+    abc_notes_button.click(lambda abc_notes_string: (abc_notes_to_midi(abc_notes_string), play_midi(abc_notes_to_midi(abc_notes_string))), inputs=abc_notes_input, outputs=[abc_notes_midi_output, abc_notes_audio_output])
     chord_button.click(lambda chord_name: (chord_to_midi(chord_name), play_midi(chord_to_midi(chord_name))), inputs=chord_input, outputs=[chord_midi_output, chord_audio_output])
     midi_with_chords_button.click(
         process_and_play_midi_with_chords,
