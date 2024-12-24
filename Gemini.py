@@ -163,46 +163,18 @@ def save_files(prompt, midi_file_path, audio_file_path):
     return new_midi_path, new_audio_path
 
 
-def generate_midi_and_play(key, tempo, time_signature, melody_style, range_desc, rhythm_desc,
-                           emotion_desc, instrument_desc, prompt_description, bars_number):
+def generate_midi_and_play(prompt):
     """Handles the full process: Gemini -> ABC -> MIDI -> Audio."""
-    # if any field is empty, then use a random prompt
-    if not any([key, tempo, time_signature, melody_style, range_desc, rhythm_desc,
-            emotion_desc, instrument_desc, prompt_description]):
-        random_prompt = random.choice(surprise_me_prompts)
-        key = random_prompt.split(",")[0].split("in ")[1].strip() if "in " in random_prompt else ""
-        tempo = random_prompt.split(",")[1].strip().split(" ")[0] if "," in random_prompt else ""
-        prompt = random_prompt
-    else:
-        prompt = f"Generate a melody with the following characteristics:"
-        if key:
-            prompt += f" key: {key},"
-        if tempo:
-            prompt += f" tempo: {tempo},"
-        if time_signature:
-            prompt += f" time signature: {time_signature},"
-        if melody_style:
-            prompt += f" melody style: {melody_style},"
-        if range_desc:
-            prompt += f" range: {range_desc},"
-
-        if rhythm_desc:
-            # Add duration explicitly to the prompt
-            if rhythm_desc:
-                prompt += f" rhythm: {rhythm_desc}, including a mix of long and short notes, and proper rests, explicitly mark the duration of the notes (e.g., 'a2','b/2', 'c3') , using quarter, eight, and sixteenth notes,"
-            else:
-                prompt += f" rhythm: with a mix of long and short notes, and proper rests, explicitly mark the duration of the notes (e.g., 'a2','b/2', 'c3') , using quarter, eight, and sixteenth notes,"
-
-        if emotion_desc:
-            prompt += f" emotion: {emotion_desc},"
-        if instrument_desc:
-            prompt += f" instrument: {instrument_desc},"
-        if prompt_description:
-            prompt += f" additional: {prompt_description}"
-        if bars_number:
-            prompt += f" and the melody must be of {bars_number} bars" # add bars to the prompt
-
+    # if the prompt is empty, then use a random prompt
+    if not prompt:
+        prompt = random.choice(surprise_me_prompts)
+        print(f"Random prompt selected: {prompt}")
+    
     try:
+        # extract tempo if available in the prompt
+        tempo_match = re.search(r'(\d+)\s*bpm', prompt, re.IGNORECASE)
+        tempo = tempo_match.group(1) if tempo_match else "120" #default tempo if not found
+
         abc_code = generate_abc_with_gemini(prompt)
         midi_file_path = abc_to_midi(abc_code, tempo)
         audio_file_path = play_midi(midi_file_path)
@@ -221,26 +193,13 @@ with gr.Blocks(title="AI Music Generator") as iface:
     gr.Markdown(
         """
         # AI Music Generator
-        Fill out the following parameters to generate a melody.
-        If any field is left empty, a suprise will be generated!
+        Enter a prompt to generate a melody.
+        If the prompt is left empty, a suprise will be generated!
         """
     )
     with gr.Column():
-        with gr.Row():
-            key_input = gr.Textbox(label="Key (e.g., C major, A minor)", placeholder="e.g., C major")
-            tempo_input = gr.Textbox(label="Tempo (BPM)", placeholder="e.g., 120")
-            time_signature_input = gr.Textbox(label="Time Signature (e.g., 4/4)", placeholder="e.g., 4/4")
-        with gr.Row():
-            melody_style_input = gr.Textbox(label="Melody Style (e.g., pop, jazz)", placeholder="e.g., pop")
-            range_input = gr.Textbox(label="Range (e.g., narrow, wide)", placeholder="e.g., narrow")
-        with gr.Row():
-            rhythm_input = gr.Textbox(label="Rhythm (e.g., simple, syncopated)", placeholder="e.g., simple")
-            emotion_input = gr.Textbox(label="Emotion (e.g., happy, sad)", placeholder="e.g., happy")
-            instrument_input = gr.Textbox(label="Instrument (e.g., piano, flute)", placeholder="e.g., piano")
-        with gr.Row():
-            bars_number_input = gr.Number(label="Number of bars", precision=0)
         prompt_input = gr.Textbox(
-            label="Additional description for your prompt", placeholder="Any other information you would like to add",
+            label="Music Description Prompt", placeholder="Enter your music description here...",
             lines=3
         )
 
@@ -249,10 +208,25 @@ with gr.Blocks(title="AI Music Generator") as iface:
             audio_output = gr.Audio(label="Generated Audio", autoplay=False)
         generate_button = gr.Button("Generate Music")
 
+    # Example Prompts Section
+    with gr.Accordion("Example Prompts", open=False):
+        example_prompts = [
+            "a happy melody in C major, 120 bpm",
+            "a sad melody in A minor, 80 bpm",
+            "a lively jazz tune in G major, 140 bpm",
+            "a mysterious melody in E minor, 90 bpm",
+            "a calm and peaceful melody in F major, 100 bpm",
+             "a catchy pop song with a simple rhythm, in a medium tempo of 110 bpm, with a piano instrument.",
+            "a sad tune using a flute instrument, in the key of D minor, and 70 bpm",
+            "a cinematic soundtrack using a string instrument, with wide range, slow rhythm and tempo of 60 bpm",
+            "Generate a melody with a wide range and syncopated rhythm, in a tempo of 130 bpm. 16 bars of length."
+        ]
+        for example in example_prompts:
+             gr.Button(example).click(lambda x=example: x, inputs=[], outputs=prompt_input)
+
     generate_button.click(
         generate_midi_and_play,
-        inputs=[key_input, tempo_input, time_signature_input, melody_style_input, range_input, rhythm_input,
-                emotion_input, instrument_input, prompt_input, bars_number_input],
+        inputs=[prompt_input],
         outputs=[midi_output, audio_output]
     )
 
